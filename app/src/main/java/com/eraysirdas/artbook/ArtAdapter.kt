@@ -32,5 +32,13 @@ class ArtAdapter(private var artBookList : ArrayList<ArtModel>) : RecyclerView.A
             intent.putExtra("id",artBookList[position].id)
             holder.itemView.context.startActivity(intent)
         }
+
+        holder.binding.imageButton.setOnClickListener {
+            val intent = Intent(holder.itemView.context,UploadActivity::class.java)
+            intent.putExtra("info","update")
+            intent.putExtra("id",artBookList[position].id)
+            holder.itemView.context.startActivity(intent)
+
+        }
     }
 }

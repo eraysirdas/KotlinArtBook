@@ -11,19 +11,21 @@ import android.graphics.ImageDecoder
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.Log
+import android.view.Menu
+import android.view.MenuInflater
+import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.PackageManagerCompat
-import androidx.transition.Visibility
 import com.eraysirdas.artbook.databinding.ActivityUploadBinding
 import com.google.android.material.snackbar.Snackbar
 import java.io.ByteArrayOutputStream
-import java.sql.Blob
 
 class UploadActivity : AppCompatActivity() {
     private lateinit var binding : ActivityUploadBinding
@@ -31,7 +33,13 @@ class UploadActivity : AppCompatActivity() {
     private lateinit var permissionLauncher : ActivityResultLauncher<String>
     private var selectedBitmap : Bitmap? = null
     private lateinit var myDatabase : SQLiteDatabase
-
+    private var selectId : Int? = null
+    private var info : String? = null
+    private var currentArtName = ""
+    private var currentArtistName = ""
+    private var currentYear = ""
+    private var currentImage : ByteArray? = null
+    private var sqlString =""
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,98 +53,157 @@ class UploadActivity : AppCompatActivity() {
 
 
         val intent = intent
-        val info = intent.getStringExtra("info")
-        val id = intent.getIntExtra("id",0)
+        info = intent.getStringExtra("info")
+        selectId = intent.getIntExtra("id",0)
 
         if(info.equals("old")){
 
             binding.button.visibility=View.INVISIBLE
-            val selectId = intent.getIntExtra("id",0)
+            binding.artNameEt.isEnabled=false
+            binding.artistNameEt.isEnabled=false
+            binding.yearEt.isEnabled=false
+            binding.imageView.isEnabled=false
+            sqlOperation()
 
-            val cursor = myDatabase.rawQuery("SELECT * FROM arts WHERE id = ?", arrayOf(selectId.toString()))
-
-            val artNameIx = cursor.getColumnIndex("artname")
-            val artistNameIx = cursor.getColumnIndex("artistname")
-            val yearIx = cursor.getColumnIndex("year")
-            val imageIx = cursor.getColumnIndex("image")
-
-            while(cursor.moveToNext()){
-                binding.artNameEt.setText(cursor.getString(artNameIx))
-                binding.artistNameEt.setText(cursor.getString(artistNameIx))
-                binding.yearEt.setText(cursor.getString(yearIx))
-
-                val byteArray = cursor.getBlob(imageIx)
-                val bitmap =BitmapFactory.decodeByteArray(byteArray,0,byteArray.size)
-                binding.imageView.setImageBitmap(bitmap)
-            }
-            cursor.close()
-
-        }else{
+        }else if(info.equals("new")){
             binding.imageView.setImageResource(R.drawable.image)
             binding.artNameEt.setText("")
             binding.artistNameEt.setText("")
             binding.yearEt.setText("")
             binding.button.visibility=View.VISIBLE
+
+        }else{
+
+            binding.button.visibility = View.VISIBLE
+            binding.button.text = "Update"
+            sqlOperation()
         }
 
     }
 
+    private fun sqlOperation() {
+        val cursor = myDatabase.rawQuery("SELECT * FROM arts WHERE id = ?", arrayOf(selectId.toString()))
+
+        val artNameIx = cursor.getColumnIndex("artname")
+        val artistNameIx = cursor.getColumnIndex("artistname")
+        val yearIx = cursor.getColumnIndex("year")
+        val imageIx = cursor.getColumnIndex("image")
+
+        while(cursor.moveToNext()){
+            currentArtName=(cursor.getString(artNameIx))
+            currentArtistName=(cursor.getString(artistNameIx))
+            currentYear=(cursor.getString(yearIx))
+
+            binding.artNameEt.setText(currentArtName)
+            binding.artistNameEt.setText(currentArtistName)
+            binding.yearEt.setText(currentYear)
+
+            currentImage = cursor.getBlob(imageIx)
+            val byteArray = currentImage
+            val bitmap =BitmapFactory.decodeByteArray(byteArray,0,byteArray!!.size)
+            binding.imageView.setImageBitmap(bitmap)
+
+        }
+        cursor.close()
+    }
+
     fun save (view: View){
 
-        val artName = binding.artNameEt.text.toString().trim()
-        val artistName = binding.artistNameEt.text.toString().trim()
-        val year = binding.yearEt.text.toString().trim()
+        val artName = binding.artNameEt.text.toString()
+        val artistName = binding.artistNameEt.text.toString()
+        val year = binding.yearEt.text.toString()
+
 
         if (artName.isEmpty() || artistName.isEmpty() || year.isEmpty()) {
             Toast.makeText(this, "Fill in the blank fields!", Toast.LENGTH_LONG).show()
             return
         }
 
+        var byteArray: ByteArray?=null
+
         if(selectedBitmap!=null){
             val smallBitmap = makeSmallerBitmap(selectedBitmap!!,300)
 
             val outputStream =ByteArrayOutputStream()
             smallBitmap.compress(Bitmap.CompressFormat.PNG,50,outputStream)
-            val byteArray=outputStream.toByteArray()
+            byteArray=outputStream.toByteArray()
 
-            try{
-                myDatabase.execSQL("CREATE TABLE IF NOT EXISTS arts(id INTEGER PRIMARY KEY,artname VARCHAR,artistname VARCHAR,year INT,image BLOB)")
+        }else if(info == "new" && byteArray == null){
 
-                val sqlString = "INSERT INTO arts(artname,artistname,year,image) VALUES(?,?,?,?)"
-                val statement = myDatabase.compileStatement(sqlString)
+            Toast.makeText(this, "Please choose a picture!", Toast.LENGTH_LONG).show()
+            return
 
-                statement.bindString(1,artName)
-                statement.bindString(2,artistName)
-                statement.bindLong(3, year.toLong())
-                statement.bindBlob(4,byteArray)
-                statement.execute()
+        } else{
 
-            }catch (e : Exception){
-                e.printStackTrace()
+            byteArray=currentImage
+        }
+
+        try{
+            if(info.equals("new")){
+
+                myDatabase.execSQL("CREATE TABLE IF NOT EXISTS arts(id INTEGER PRIMARY KEY,artname VARCHAR,artistname VARCHAR,year VARCHAR,image BLOB)")
+                sqlString = "INSERT INTO arts (artname,artistname,year,image) VALUES(?,?,?,?)"
+
+            }else if(info.equals("update")){
+                val queryBuilder = StringBuilder()
+                queryBuilder.append("UPDATE arts SET ")
+
+                var hasChanges = false
+
+                if(artName != currentArtName){
+                    queryBuilder.append("artname = ?, ")
+                    hasChanges=true
+                }
+                if(artistName != currentArtistName){
+                    queryBuilder.append("artistname = ?, ")
+                    hasChanges=true
+                }
+                if(year != currentYear){
+                    queryBuilder.append("year = ?, ")
+                    hasChanges=true
+                }
+                if(!byteArray.contentEquals((currentImage))){
+                    queryBuilder.append("image = ?, ")
+                    hasChanges=true
+                }
+
+                if (!hasChanges) {
+                    Toast.makeText(this, "No changes to update!", Toast.LENGTH_LONG).show()
+                    return
+                }
+
+                sqlString = queryBuilder.substring(0,queryBuilder.length-2)
+                sqlString += " WHERE id = "+ selectId
             }
 
-            val intent = Intent(this@UploadActivity,MainActivity::class.java)
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            startActivity(intent)
-        }else{
-            Toast.makeText(this, "Please choose a picture!", Toast.LENGTH_LONG).show()
+            val statement = myDatabase.compileStatement(sqlString)
+
+            var bindIndex = 1
+
+            if (artName != currentArtName) {
+                statement.bindString(bindIndex++, artName)
+            }
+            if (artistName != currentArtistName) {
+                statement.bindString(bindIndex++, artistName)
+            }
+            if (year != currentYear) {
+                statement.bindString(bindIndex++, year)
+            }
+            if (!byteArray.contentEquals(currentImage)) {
+                statement.bindBlob(bindIndex++, byteArray)
+            }
+
+            statement.execute()
+
+        }catch (e : Exception){
+            e.printStackTrace()
+            Log.e("UploadActivity", "SQL Exception: ${e.message}")
         }
 
-
-
-
-
-        if(binding.artNameEt.toString().isEmpty()||binding.artistNameEt.toString().isEmpty()||binding.yearEt.toString().isEmpty()){
-            Toast.makeText(this,"Boş Alanları Doldurunuz",Toast.LENGTH_LONG).show()
-        }else{
-
-        }
-
+        val intent = Intent(this@UploadActivity,MainActivity::class.java)
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        startActivity(intent)
     }
-
-
-
-
 
     private fun makeSmallerBitmap(image : Bitmap,maximumSize : Int) : Bitmap{
         var width = image.width
@@ -245,5 +312,50 @@ class UploadActivity : AppCompatActivity() {
             }
 
         }
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+
+        val inflater: MenuInflater = menuInflater
+        inflater.inflate(R.menu.delete_menu, menu)
+
+        if (info == "update") {
+            menu?.findItem(R.id.menuDeleteBtn)?.isVisible = false
+        }
+
+        return super.onCreateOptionsMenu(menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if(item.itemId==R.id.menuDeleteBtn){
+            showAlertDialog()
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
+    private fun deleteSqlOperation() {
+        myDatabase.execSQL("DELETE FROM arts WHERE id = ?", arrayOf(selectId.toString()))
+        myDatabase.close()
+    }
+
+    private fun showAlertDialog() {
+        val alertDialog =AlertDialog.Builder(this@UploadActivity)
+        alertDialog.setTitle("Art Delete")
+        alertDialog.setMessage("Do you want to delete the art?")
+
+        alertDialog.setPositiveButton("Yes"){dialog,which->
+
+            deleteSqlOperation()
+
+            Toast.makeText(this@UploadActivity,"Art Deleted!",Toast.LENGTH_LONG).show()
+
+            val intent = Intent(this@UploadActivity,MainActivity::class.java)
+            startActivity(intent)
+            finish()
+        }
+        alertDialog.setNegativeButton("No"){dialog,which->
+            dialog.dismiss()
+        }
+        alertDialog.show()
     }
 }
